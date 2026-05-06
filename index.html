@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OMR System</title>
+
+  <!-- FIREBASE -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
+  <!-- PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial;
+      background: #ffe6ee;
+      text-align: center;
+    }
+
+    .box {
+      background: #fff;
+      padding: 15px;
+      margin: 10px auto;
+      width: 85%;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    td {
+      padding: 10px;
+      text-align: center;
+    }
+
+    label span {
+      display: inline-block;
+      width: 30px;
+      height: 30px;
+      line-height: 30px;
+      border: 2px solid #cc3366;
+      border-radius: 50%;
+      cursor: pointer;
+      color: #cc3366;
+      font-weight: bold;
+    }
+
+    input[type="radio"] { display: none; }
+
+    input[type="radio"]:checked + span {
+      background: #cc3366;
+      color: white;
+    }
+
+    button {
+      padding: 10px 18px;
+      margin: 5px;
+      border: none;
+      background: #cc3366;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    input {
+      padding: 6px;
+      border-radius: 5px;
+      border: 1px solid #cc3366;
+    }
+
+    #timer {
+      font-size: 22px;
+      font-weight: bold;
+      color: #cc3366;
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- LOGIN -->
+<div class="box" id="loginBox">
+  <h2>Login</h2>
+  <input id="studentName" placeholder="Name"><br><br>
+  <input id="studentId" placeholder="ID"><br><br>
+  <button onclick="login()">Login</button>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none;">
+
+<h1>Digital OMR System</h1>
+
+<div class="box">
+  Questions: <input type="number" id="numQuestions" value="10">
+  Correct: <input type="number" id="correctMark" value="4">
+  Wrong: <input type="number" id="wrongMark" value="-1">
+  Time: <input type="number" id="timeInput" value="10">
+  <br><br>
+
+  <button onclick="startExam()">Start</button>
+  <button onclick="testFirebase()">Test Firebase</button>
+
+  <h2>Timer: <span id="timer">--:--</span></h2>
+</div>
+
+<div class="box" id="examBox"></div>
+
+<div class="box" id="actionBox" style="display:none;">
+  <button onclick="submitExam()">Submit</button>
+</div>
+
+<div class="box" id="answerBox" style="display:none;">
+  <input id="answerKey" placeholder="A,B,C,D,...">
+  <br><br>
+  <button onclick="evaluateExam()">Evaluate</button>
+</div>
+
+<div class="box">
+  <h2 id="result"></h2>
+  <p id="summary"></p>
+  <button onclick="downloadPDF()">Download PDF</button>
+</div>
+
+<div class="box">
+  <h2>History</h2>
+  <button onclick="showHistory()">Show</button>
+  <div id="history"></div>
+</div>
+
+</div>
+
+<script>
+
+/* ================= FIREBASE INIT ================= */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+/* ================= VARIABLES ================= */
+let user = "";
+let totalQ = 0;
+let timer;
+let timeLeft = 0;
+
+/* ================= LOGIN ================= */
+function login(){
+  let name = document.getElementById("studentName").value.trim();
+  let id = document.getElementById("studentId").value.trim();
+
+  if(!name || !id){
+    alert("Enter details");
+    return;
+  }
+
+  user = (name + "_" + id).trim().toLowerCase();
+
+  document.getElementById("loginBox").style.display = "none";
+  document.getElementById("app").style.display = "block";
+}
+
+/* ================= START EXAM ================= */
+function startExam(){
+
+  totalQ = parseInt(document.getElementById("numQuestions").value);
+
+  let html = "<table>";
+
+  for(let i=0;i<totalQ;i++){
+    html += `
+      <tr>
+        <td>${i+1}</td>
+        <td><label><input type="radio" name="q${i}" value="A"><span>A</span></label></td>
+        <td><label><input type="radio" name="q${i}" value="B"><span>B</span></label></td>
+        <td><label><input type="radio" name="q${i}" value="C"><span>C</span></label></td>
+        <td><label><input type="radio" name="q${i}" value="D"><span>D</span></label></td>
+      </tr>
+    `;
+  }
+
+  html += "</table>";
+
+  document.getElementById("examBox").innerHTML = html;
+  document.getElementById("actionBox").style.display = "block";
+
+  startTimer();
+}
+
+/* ================= TIMER ================= */
+function startTimer(){
+
+  let mins = parseInt(document.getElementById("timeInput").value);
+  timeLeft = mins * 60;
+
+  clearInterval(timer);
+
+  timer = setInterval(() => {
+
+    let m = Math.floor(timeLeft / 60);
+    let s = timeLeft % 60;
+
+    document.getElementById("timer").innerText =
+      `${m}:${s<10?"0":""}${s}`;
+
+    timeLeft--;
+
+    if(timeLeft < 0){
+      submitExam();
+    }
+
+  },1000);
+}
+
+/* ================= SUBMIT ================= */
+function submitExam(){
+  clearInterval(timer);
+  document.getElementById("answerBox").style.display = "block";
+}
+
+/* ================= EVALUATION ================= */
+function evaluateExam(){
+
+  let key = document.getElementById("answerKey").value
+    .split(",")
+    .map(x => x.trim().toUpperCase());
+
+  let correctMark = parseFloat(document.getElementById("correctMark").value);
+  let wrongMark = parseFloat(document.getElementById("wrongMark").value);
+
+  let score = 0, correct = 0, wrong = 0;
+
+  for(let i=0;i<totalQ;i++){
+
+    let ans = "";
+    let opts = document.getElementsByName("q"+i);
+
+    for(let o of opts){
+      if(o.checked) ans = o.value;
+    }
+
+    let correctAns = key[i] || "";
+
+    if(ans === correctAns && ans !== ""){
+      score += correctMark;
+      correct++;
+    }
+    else if(ans !== "" && correctAns !== ""){
+      score += wrongMark;
+      wrong++;
+    }
+  }
+
+  let percent = (score / (totalQ * correctMark)) * 100;
+
+  document.getElementById("result").innerText = "Score: " + score;
+  document.getElementById("summary").innerText =
+    `Correct:${correct} Wrong:${wrong} %:${percent.toFixed(2)}`;
+
+  saveHistory(score,correct,wrong,percent);
+}
+
+/* ================= PDF ================= */
+function downloadPDF(){
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  doc.text("OMR Result",20,20);
+  doc.text(document.getElementById("result").innerText,20,40);
+  doc.text(document.getElementById("summary").innerText,20,55);
+  doc.text("User: "+user,20,75);
+
+  doc.save("result.pdf");
+}
+
+/* ================= FIREBASE TEST ================= */
+function testFirebase(){
+
+  db.collection("test").add({
+    message: "Firebase working",
+    time: new Date().toString()
+  })
+  .then(()=>alert("Firebase WORKING ✅"))
+  .catch(err=>alert("ERROR ❌ "+err.message));
+
+}
+
+/* ================= SAVE TO FIREBASE ONLY ================= */
+function saveHistory(score,correct,wrong,percent){
+
+  db.collection("omrResults").add({
+    user:user,
+    score:score,
+    correct:correct,
+    wrong:wrong,
+    percent:percent.toFixed(2),
+    date:new Date().toLocaleString()
+  });
+
+}
+
+/* ================= HISTORY (FIXED & RELIABLE) ================= */
+function showHistory(){
+
+  db.collection("omrResults")
+    .where("user","==",user)
+    .get()
+    .then(snapshot=>{
+
+      let out="";
+
+      snapshot.forEach(doc=>{
+        let d=doc.data();
+
+        out+=`
+          <div style="border:1px solid #cc3366;margin:5px;padding:5px;">
+            ${d.date}<br>
+            Score:${d.score} | Correct:${d.correct} | Wrong:${d.wrong} | %:${d.percent}
+          </div>
+        `;
+      });
+
+      document.getElementById("history").innerHTML =
+        out || "No history found";
+
+    });
+
+}
+
+</script>
+
+</body>
+</html>
